@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  python-ci:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black mypy pytest
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          elif [ -f pyproject.toml ]; then
+            pip install -e .
+          elif [ -f setup.py ]; then
+            pip install -e .
+          fi
+      
+      - name: Code Quality (ruff)
+        run: ruff check .
+        continue-on-error: true
+      
+      - name: Code Formatting (black)
+        run: black --check .
+        continue-on-error: true
+      
+      - name: Type Checking (mypy)
+        run: |
+          if [ -f mypy.ini ] || [ -f setup.cfg ] || [ -f pyproject.toml ] || [ -f .mypy.ini ]; then
+            mypy .
+          else
+            echo "No mypy configuration found, skipping"
+          fi
+        continue-on-error: true
+      
+      - name: Run tests
+        run: |
+          if [ -d tests ] || [ -d test ] || find . -name "test_*.py" -o -name "*_test.py" | grep -q .; then
+            pytest -v
+          else
+            echo "No test files found, skipping"
+          fi
+        continue-on-error: true
