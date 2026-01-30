@@ -21,3 +21,18 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    # Добавлен healthcheck для проверки состояния приложения
+    # Интервал проверки - 30 секунд, таймаут - 10 секунд
+    # 3 попытки перед тем как пометить контейнер как unhealthy
+    # 40 секунд на старт приложения
+
+  # Добавлен сервис для проверки качества кода
+  code-quality:
+    image: python:3.9-slim
+    volumes:
+      - .:/app
+    working_dir: /app
+    entrypoint: /app/scripts/quality_check.sh
+    depends_on:
+      github-app:
+        condition: service_healthy
