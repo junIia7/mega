@@ -8,6 +8,12 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from issue_analyzer import analyze_issue_to_spec
+from typing import Optional, Dict, Any
+import logging
+
+# Настраиваем логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Загружаем переменные окружения из .env файла
 load_dotenv()
@@ -19,8 +25,9 @@ GITHUB_APP_ID = os.getenv('GITHUB_APP_ID')
 GITHUB_APP_PRIVATE_KEY = os.getenv('GITHUB_APP_PRIVATE_KEY')
 GITHUB_INSTALLATION_ID = os.getenv('GITHUB_INSTALLATION_ID', '')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 
-def get_github_app_token():
+def get_github_app_token() -> str:
     """
     Генерирует JWT токен для GitHub App
     """
@@ -41,7 +48,7 @@ def get_github_app_token():
     token = jwt.encode(payload, private_key, algorithm='RS256')
     return token
 
-def get_installation_access_token(installation_id):
+def get_installation_access_token(installation_id: str) -> str:
     """
     Получает access token для установки GitHub App
     """
@@ -60,12 +67,12 @@ def get_installation_access_token(installation_id):
     else:
         raise Exception(f"Ошибка получения access token: {response.status_code} - {response.text}")
 
-def verify_webhook_signature(payload_body, signature_header):
+def verify_webhook_signature(payload_body: bytes, signature_header: Optional[str]) -> bool:
     """
     Проверяет подпись webhook от GitHub используя HMAC SHA256
     """
     if not WEBHOOK_SECRET:
-        print("⚠️  ВНИМАНИЕ: WEBHOOK_SECRET не установлен, проверка подписи пропущена")
+        logger.warning("⚠️  ВНИМАНИЕ: WEBHOOK_SECRET не установлен, проверка подписи пропущена")
         return True  # Если секрет не установлен, пропускаем проверку
     
     if not signature_header:
@@ -88,25 +95,21 @@ def verify_webhook_signature(payload_body, signature_header):
     # Безопасное сравнение хешей
     return hmac.compare_digest(received_hash, expected_hash)
 
-def get_repository_name(owner, repo, installation_id=None):
+def get_repository_info(owner: str, repo: str, installation_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Получает название репозитория через GitHub API
+    Получает информацию о репозитории через GitHub API
     """
+    headers = {}
+    
     if installation_id:
         access_token = get_installation_access_token(installation_id)
-        headers = {
-            'Authorization': f'token {access_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
+        headers['Authorization'] = f'token {access_token}'
+    elif GITHUB_TOKEN:
+        headers['Authorization'] = f'token {GITHUB_TOKEN}'
     else:
-        # Альтернативный способ: использование личного токена
-        personal_token = os.getenv('GITHUB_TOKEN')
-        if not personal_token:
-            raise ValueError("Необходим либо GITHUB_INSTALLATION_ID, либо GITHUB_TOKEN")
-        headers = {
-            'Authorization': f'token {personal_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
+        raise ValueError("Необходим либо GITHUB_INSTALLATION_ID, либо GITHUB_TOKEN")
+    
+    headers['Accept'] = 'application/vnd.github.v3+json'
     
     url = f'https://api.github.com/repos/{owner}/{repo}'
     response = requests.get(url, headers=headers)
@@ -134,23 +137,25 @@ def index():
         'message': 'GitHub App для получения информации о репозитории',
         'endpoints': {
             '/repo/<owner>/<repo>': 'Получить информацию о репозитории',
-            '/webhook': 'Webhook для GitHub событий'
+            '/webhook': 'Webhook для GitHub событий',
+            '/health': 'Проверка работоспособности'
         }
     })
 
 @app.route('/repo/<owner>/<repo>', methods=['GET'])
-def get_repo_info(owner, repo):
+def get_repo_info(owner: str, repo: str):
     """
     Получает информацию о репозитории
     """
     try:
         installation_id = request.args.get('installation_id', GITHUB_INSTALLATION_ID) or None
-        repo_info = get_repository_name(owner, repo, installation_id)
+        repo_info = get_repository_info(owner, repo, installation_id)
         return jsonify({
             'success': True,
             'repository': repo_info
         })
     except Exception as e:
+        logger.error(f"Ошибка получения информации о репозитории: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -168,7 +173,7 @@ def webhook():
         # Проверяем подпись webhook
         signature_header = request.headers.get('X-Hub-Signature-256')
         if not verify_webhook_signature(payload_body, signature_header):
-            print("❌ Ошибка: Неверная подпись webhook")
+            logger.error("❌ Ошибка: Неверная подпись webhook")
             return jsonify({
                 'error': 'Неверная подпись webhook'
             }), 401
@@ -177,12 +182,12 @@ def webhook():
         payload = request.json
         event_type = request.headers.get('X-GitHub-Event')
         
-        print(f"📥 Получено событие: {event_type}")
+        logger.info(f"📥 Получено событие: {event_type}")
         
         # Обработка установки GitHub App
         if event_type == 'installation' and payload.get('action') == 'created':
             installation_id = payload['installation']['id']
-            print(f"✅ GitHub App установлен! Installation ID: {installation_id}")
+            logger.info(f"✅ GitHub App установлен! Installation ID: {installation_id}")
             return jsonify({
                 'message': f'GitHub App установлен! Installation ID: {installation_id}',
                 'installation_id': installation_id
@@ -200,16 +205,16 @@ def webhook():
             issue_number = issue.get('number', '?')
             
             # Выводим в консоль имя репозитория и название issue
-            print("=" * 60)
-            print(f"📝 СОЗДАНА НОВАЯ ISSUE")
-            print(f"📦 Репозиторий: {repo_name}")
-            print(f"🔗 Полное имя: {repo_full_name}")
-            print(f"#️⃣  Номер issue: #{issue_number}")
-            print(f"📌 Название issue: {issue_title}")
-            print("=" * 60)
+            logger.info("=" * 60)
+            logger.info(f"📝 СОЗДАНА НОВАЯ ISSUE")
+            logger.info(f"📦 Репозиторий: {repo_name}")
+            logger.info(f"🔗 Полное имя: {repo_full_name}")
+            logger.info(f"#️⃣  Номер issue: #{issue_number}")
+            logger.info(f"📌 Название issue: {issue_title}")
+            logger.info("=" * 60)
             
             # Анализируем issue и создаем ТЗ
-            print("\n🤖 Анализирую issue и создаю техническое задание...")
+            logger.info("\n🤖 Анализирую issue и создаю техническое задание...")
             try:
                 technical_spec = analyze_issue_to_spec(
                     issue_title=issue_title,
@@ -218,14 +223,14 @@ def webhook():
                 )
                 
                 # Выводим ТЗ в консоль с красивым форматированием
-                print("\n" + "=" * 80)
-                print("📋 ТЕХНИЧЕСКОЕ ЗАДАНИЕ")
-                print("=" * 80)
-                print(technical_spec)
-                print("=" * 80 + "\n")
+                logger.info("\n" + "=" * 80)
+                logger.info("📋 ТЕХНИЧЕСКОЕ ЗАДАНИЕ")
+                logger.info("=" * 80)
+                logger.info(technical_spec)
+                logger.info("=" * 80 + "\n")
                 
             except Exception as e:
-                print(f"⚠️ Ошибка при создании ТЗ: {str(e)}")
+                logger.error(f"⚠️ Ошибка при создании ТЗ: {str(e)}")
                 technical_spec = None
             
             return jsonify({
@@ -251,7 +256,7 @@ def webhook():
             repo_name = repo.get('name')
             repo_full_name = repo.get('full_name')
             
-            print(f"📦 Событие {event_type} для репозитория: {repo_full_name}")
+            logger.info(f"📦 Событие {event_type} для репозитория: {repo_full_name}")
             
             return jsonify({
                 'event': event_type,
@@ -260,13 +265,13 @@ def webhook():
                 'message': f'Получено событие {event_type} для репозитория {repo_full_name}'
             })
         
-        print(f"ℹ️  Необработанное событие: {event_type}")
+        logger.info(f"ℹ️  Необработанное событие: {event_type}")
         return jsonify({
             'event': event_type,
             'message': 'Webhook получен'
         })
     except Exception as e:
-        print(f"❌ Ошибка обработки webhook: {str(e)}")
+        logger.error(f"❌ Ошибка обработки webhook: {str(e)}")
         return jsonify({
             'error': str(e)
         }), 500
