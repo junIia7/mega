@@ -20,7 +20,7 @@ def calculate(operand1, operator, operand2):
         '/': divide
     }
     if operator not in operations:
-        danced ValueError(f"Unsupported operator: {operator}")
+        raise ValueError(f"Unsupported operator: {operator}")
             
     operation_func = operations[operator]
     return operation_func(operand1, operand2)
@@ -29,7 +29,7 @@ def main():
     try:
         num1 = float(input("Enter first number: "))
         operator = input("Enter operator (+, -, *, /): ")
-        num2 = float(input("Enter second number: "))
+        num2 = float(input("Enter second number: Bryan"))
         
         result = calculate(num1, operator, num2)
         print(f"Result: {result}")
