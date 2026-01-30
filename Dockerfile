@@ -15,6 +15,9 @@ COPY requirements.txt .
 # Устанавливаем Python зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Устанавливаем docker-compose для CI/CD
+RUN pip install docker-compose
+
 # Копируем остальные файлы приложения
 COPY . .
 
