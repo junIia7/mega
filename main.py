@@ -8,6 +8,7 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from issue_analyzer import analyze_issue_to_spec
+from typing import Optional, Dict, Any
 
 # Загружаем переменные окружения из .env файла
 load_dotenv()
@@ -20,7 +21,7 @@ GITHUB_APP_PRIVATE_KEY = os.getenv('GITHUB_APP_PRIVATE_KEY')
 GITHUB_INSTALLATION_ID = os.getenv('GITHUB_INSTALLATION_ID', '')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')
 
-def get_github_app_token():
+def get_github_app_token() -> str:
     """
     Генерирует JWT токен для GitHub App
     """
@@ -41,7 +42,7 @@ def get_github_app_token():
     token = jwt.encode(payload, private_key, algorithm='RS256')
     return token
 
-def get_installation_access_token(installation_id):
+def get_installation_access_token(installation_id: str) -> str:
     """
     Получает access token для установки GitHub App
     """
@@ -60,7 +61,7 @@ def get_installation_access_token(installation_id):
     else:
         raise Exception(f"Ошибка получения access token: {response.status_code} - {response.text}")
 
-def verify_webhook_signature(payload_body, signature_header):
+def verify_webhook_signature(payload_body: bytes, signature_header: Optional[str]) -> bool:
     """
     Проверяет подпись webhook от GitHub используя HMAC SHA256
     """
@@ -88,9 +89,9 @@ def verify_webhook_signature(payload_body, signature_header):
     # Безопасное сравнение хешей
     return hmac.compare_digest(received_hash, expected_hash)
 
-def get_repository_name(owner, repo, installation_id=None):
+def get_repository_info(owner: str, repo: str, installation_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Получает название репозитория через GitHub API
+    Получает информацию о репозитории через GitHub API
     """
     if installation_id:
         access_token = get_installation_access_token(installation_id)
@@ -126,7 +127,7 @@ def get_repository_name(owner, repo, installation_id=None):
         raise Exception(f"Ошибка получения данных репозитория: {response.status_code} - {response.text}")
 
 @app.route('/')
-def index():
+def index() -> Any:
     """
     Главная страница
     """
@@ -139,13 +140,13 @@ def index():
     })
 
 @app.route('/repo/<owner>/<repo>', methods=['GET'])
-def get_repo_info(owner, repo):
+def get_repo_info(owner: str, repo: str) -> Any:
     """
     Получает информацию о репозитории
     """
     try:
         installation_id = request.args.get('installation_id', GITHUB_INSTALLATION_ID) or None
-        repo_info = get_repository_name(owner, repo, installation_id)
+        repo_info = get_repository_info(owner, repo, installation_id)
         return jsonify({
             'success': True,
             'repository': repo_info
@@ -157,7 +158,7 @@ def get_repo_info(owner, repo):
         }), 500
 
 @app.route('/webhook', methods=['POST'])
-def webhook():
+def webhook() -> Any:
     """
     Обработчик webhook от GitHub
     """
@@ -272,7 +273,7 @@ def webhook():
         }), 500
 
 @app.route('/health', methods=['GET'])
-def health():
+def health() -> Any:
     """
     Проверка работоспособности
     """
