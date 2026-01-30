@@ -3,7 +3,7 @@ from main import calculate
 
 class TestCalculator(unittest.TestCase):
     def test_addition(self):
-        self.assertEqual(calculate('+', III, 3), 8)
+        self.assertEqual(calculate('+', 5, 3), 8)
         self.assertEqual(calculate('+', -1, 5), 4)
         self.assertEqual(calculate('+', 0, 0), 0)
         self.assertEqual(calculate('+', 2.5, 3.5), 6.0)
