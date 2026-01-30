@@ -7,7 +7,8 @@ import requests
 from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from issue_analyzer import analyze_issue_to_spec
+from typing import Optional, Dict, Any
+from functools import wraps
 
 # Загружаем переменные окружения из .env файла
 load_dotenv()
@@ -20,7 +21,11 @@ GITHUB_APP_PRIVATE_KEY = os.getenv('GITHUB_APP_PRIVATE_KEY')
 GITHUB_INSTALLATION_ID = os.getenv('GITHUB_INSTALLATION_ID', '')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')
 
-def get_github_app_token():
+# Типы данных для type hints
+GitHubPayload = Dict[str, Any]
+GitHubHeaders = Dict[str, str]
+
+def get_github_app_token() -> str:
     """
     Генерирует JWT токен для GitHub App
     """
@@ -41,7 +46,7 @@ def get_github_app_token():
     token = jwt.encode(payload, private_key, algorithm='RS256')
     return token
 
-def get_installation_access_token(installation_id):
+def get_installation_access_token(installation_id: str) -> str:
     """
     Получает access token для установки GitHub App
     """
@@ -60,7 +65,7 @@ def get_installation_access_token(installation_id):
     else:
         raise Exception(f"Ошибка получения access token: {response.status_code} - {response.text}")
 
-def verify_webhook_signature(payload_body, signature_header):
+def verify_webhook_signature(payload_body: bytes, signature_header: Optional[str]) -> bool:
     """
     Проверяет подпись webhook от GitHub используя HMAC SHA256
     """
@@ -88,9 +93,9 @@ def verify_webhook_signature(payload_body, signature_header):
     # Безопасное сравнение хешей
     return hmac.compare_digest(received_hash, expected_hash)
 
-def get_repository_name(owner, repo, installation_id=None):
+def get_repository_info(owner: str, repo: str, installation_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Получает название репозитория через GitHub API
+    Получает информацию о репозитории через GitHub API
     """
     if installation_id:
         access_token = get_installation_access_token(installation_id)
@@ -125,6 +130,21 @@ def get_repository_name(owner, repo, installation_id=None):
     else:
         raise Exception(f"Ошибка получения данных репозитория: {response.status_code} - {response.text}")
 
+def error_handler(func):
+    """
+    Декоратор для обработки ошибок в API эндпоинтах
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+    return wrapper
+
 @app.route('/')
 def index():
     """
@@ -134,142 +154,133 @@ def index():
         'message': 'GitHub App для получения информации о репозитории',
         'endpoints': {
             '/repo/<owner>/<repo>': 'Получить информацию о репозитории',
-            '/webhook': 'Webhook для GitHub событий'
+            '/webhook': 'Webhook для GitHub событий',
+            '/health': 'Проверка работоспособности'
         }
     })
 
 @app.route('/repo/<owner>/<repo>', methods=['GET'])
-def get_repo_info(owner, repo):
+@error_handler
+def get_repo_info(owner: str, repo: str):
     """
     Получает информацию о репозитории
     """
-    try:
-        installation_id = request.args.get('installation_id', GITHUB_INSTALLATION_ID) or None
-        repo_info = get_repository_name(owner, repo, installation_id)
-        return jsonify({
-            'success': True,
-            'repository': repo_info
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    installation_id = request.args.get('installation_id', GITHUB_INSTALLATION_ID) or None
+    repo_info = get_repository_info(owner, repo, installation_id)
+    return jsonify({
+        'success': True,
+        'repository': repo_info
+    })
 
 @app.route('/webhook', methods=['POST'])
+@error_handler
 def webhook():
     """
     Обработчик webhook от GitHub
     """
-    try:
-        # Получаем сырое тело запроса для проверки подписи
-        payload_body = request.get_data()
+    # Получаем сырое тело запроса для проверки подписи
+    payload_body = request.get_data()
+    
+    # Проверяем подпись webhook
+    signature_header = request.headers.get('X-Hub-Signature-256')
+    if not verify_webhook_signature(payload_body, signature_header):
+        print("❌ Ошибка: Неверная подпись webhook")
+        return jsonify({
+            'error': 'Неверная подпись webhook'
+        }), 401
+    
+    # Парсим JSON payload
+    payload = request.json
+    event_type = request.headers.get('X-GitHub-Event')
+    
+    print(f"📥 Получено событие: {event_type}")
+    
+    # Обработка установки GitHub App
+    if event_type == 'installation' and payload.get('action') == 'created':
+        installation_id = payload['installation']['id']
+        print(f"✅ GitHub App установлен! Installation ID: {installation_id}")
+        return jsonify({
+            'message': f'GitHub App установлен! Installation ID: {installation_id}',
+            'installation_id': installation_id
+        })
+    
+    # Обработка создания issue
+    if event_type == 'issues' and payload.get('action') == 'opened':
+        issue = payload.get('issue', {})
+        repository = payload.get('repository', {})
         
-        # Проверяем подпись webhook
-        signature_header = request.headers.get('X-Hub-Signature-256')
-        if not verify_webhook_signature(payload_body, signature_header):
-            print("❌ Ошибка: Неверная подпись webhook")
-            return jsonify({
-                'error': 'Неверная подпись webhook'
-            }), 401
+        repo_name = repository.get('name', 'Неизвестный репозиторий')
+        repo_full_name = repository.get('full_name', 'Неизвестный репозиторий')
+        issue_title = issue.get('title', 'Без названия')
+        issue_body = issue.get('body', '')
+        issue_number = issue.get('number', '?')
         
-        # Парсим JSON payload
-        payload = request.json
-        event_type = request.headers.get('X-GitHub-Event')
+        # Выводим в консоль имя репозитория и название issue
+        print("=" * 60)
+        print(f"📝 СОЗДАНА НОВАЯ ISSUE")
+        print(f"📦 Репозиторий: {repo_name}")
+        print(f"🔗 Полное имя: {repo_full_name}")
+        print(f"#️⃣  Номер issue: #{issue_number}")
+        print(f"📌 Название issue: {issue_title}")
+        print("=" * 60)
         
-        print(f"📥 Получено событие: {event_type}")
-        
-        # Обработка установки GitHub App
-        if event_type == 'installation' and payload.get('action') == 'created':
-            installation_id = payload['installation']['id']
-            print(f"✅ GitHub App установлен! Installation ID: {installation_id}")
-            return jsonify({
-                'message': f'GitHub App установлен! Installation ID: {installation_id}',
-                'installation_id': installation_id
-            })
-        
-        # Обработка создания issue
-        if event_type == 'issues' and payload.get('action') == 'opened':
-            issue = payload.get('issue', {})
-            repository = payload.get('repository', {})
+        # Анализируем issue и создаем ТЗ
+        print("\n🤖 Анализирую issue и создаю техническое задание...")
+        try:
+            technical_spec = analyze_issue_to_spec(
+                issue_title=issue_title,
+                issue_body=issue_body,
+                repository_name=repo_full_name
+            )
             
-            repo_name = repository.get('name', 'Неизвестный репозиторий')
-            repo_full_name = repository.get('full_name', 'Неизвестный репозиторий')
-            issue_title = issue.get('title', 'Без названия')
-            issue_body = issue.get('body', '')
-            issue_number = issue.get('number', '?')
+            # Выводим ТЗ в консоль с красивым форматированием
+            print("\n" + "=" * 80)
+            print("📋 ТЕХНИЧЕСКОЕ ЗАДАНИЕ")
+            print("=" * 80)
+            print(technical_spec)
+            print("=" * 80 + "\n")
             
-            # Выводим в консоль имя репозитория и название issue
-            print("=" * 60)
-            print(f"📝 СОЗДАНА НОВАЯ ISSUE")
-            print(f"📦 Репозиторий: {repo_name}")
-            print(f"🔗 Полное имя: {repo_full_name}")
-            print(f"#️⃣  Номер issue: #{issue_number}")
-            print(f"📌 Название issue: {issue_title}")
-            print("=" * 60)
-            
-            # Анализируем issue и создаем ТЗ
-            print("\n🤖 Анализирую issue и создаю техническое задание...")
-            try:
-                technical_spec = analyze_issue_to_spec(
-                    issue_title=issue_title,
-                    issue_body=issue_body,
-                    repository_name=repo_full_name
-                )
-                
-                # Выводим ТЗ в консоль с красивым форматированием
-                print("\n" + "=" * 80)
-                print("📋 ТЕХНИЧЕСКОЕ ЗАДАНИЕ")
-                print("=" * 80)
-                print(technical_spec)
-                print("=" * 80 + "\n")
-                
-            except Exception as e:
-                print(f"⚠️ Ошибка при создании ТЗ: {str(e)}")
-                technical_spec = None
-            
-            return jsonify({
-                'success': True,
-                'event': 'issue_opened',
-                'repository': {
-                    'name': repo_name,
-                    'full_name': repo_full_name
-                },
-                'issue': {
-                    'number': issue_number,
-                    'title': issue_title,
-                    'url': issue.get('html_url', ''),
-                    'body': issue_body
-                },
-                'technical_spec': technical_spec if technical_spec else None,
-                'message': f'Issue #{issue_number} "{issue_title}" создана в репозитории {repo_full_name}'
-            })
+        except Exception as e:
+            print(f"⚠️ Ошибка при создании ТЗ: {str(e)}")
+            technical_spec = None
         
-        # Обработка других событий репозитория
-        if 'repository' in payload:
-            repo = payload['repository']
-            repo_name = repo.get('name')
-            repo_full_name = repo.get('full_name')
-            
-            print(f"📦 Событие {event_type} для репозитория: {repo_full_name}")
-            
-            return jsonify({
-                'event': event_type,
-                'repository_name': repo_name,
-                'repository_full_name': repo_full_name,
-                'message': f'Получено событие {event_type} для репозитория {repo_full_name}'
-            })
+        return jsonify({
+            'success': True,
+            'event': 'issue_opened',
+            'repository': {
+                'name': repo_name,
+                'full_name': repo_full_name
+            },
+            'issue': {
+                'number': issue_number,
+                'title': issue_title,
+                'url': issue.get('html_url', ''),
+                'body': issue_body
+            },
+            'technical_spec': technical_spec if technical_spec else None,
+            'message': f'Issue #{issue_number} "{issue_title}" создана в репозитории {repo_full_name}'
+        })
+    
+    # Обработка других событий репозитория
+    if 'repository' in payload:
+        repo = payload['repository']
+        repo_name = repo.get('name')
+        repo_full_name = repo.get('full_name')
         
-        print(f"ℹ️  Необработанное событие: {event_type}")
+        print(f"📦 Событие {event_type} для репозитория: {repo_full_name}")
+        
         return jsonify({
             'event': event_type,
-            'message': 'Webhook получен'
+            'repository_name': repo_name,
+            'repository_full_name': repo_full_name,
+            'message': f'Получено событие {event_type} для репозитория {repo_full_name}'
         })
-    except Exception as e:
-        print(f"❌ Ошибка обработки webhook: {str(e)}")
-        return jsonify({
-            'error': str(e)
-        }), 500
+    
+    print(f"ℹ️  Необработанное событие: {event_type}")
+    return jsonify({
+        'event': event_type,
+        'message': 'Webhook получен'
+    })
 
 @app.route('/health', methods=['GET'])
 def health():
