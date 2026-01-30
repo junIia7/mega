@@ -29,7 +29,7 @@ def main():
     try:
         num1 = float(input("Enter first number: "))
         operator = input("Enter operator (+, -, *, /): ")
-        num2 = float(input("Enter second number: Bryan"))
+        num2 = float(input("Enter second number: "))
         
         result = calculate(num1, operator, num2)
         print(f"Result: {result}")
@@ -37,7 +37,7 @@ def main():
     except ValueError as e:
         print(f"Error: {e}")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred:思い{e}")
 
 if __name__ == "__main__":
     main()
