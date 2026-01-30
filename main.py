@@ -20,6 +20,10 @@ GITHUB_APP_PRIVATE_KEY = os.getenv('GITHUB_APP_PRIVATE_KEY')
 GITHUB_INSTALLATION_ID = os.getenv('GITHUB_INSTALLATION_ID', '')
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')
 
+# Константы для JWT токена
+JWT_ISSUED_AT_OFFSET = 60
+JWT_EXPIRATION_TIME = 600
+
 def get_github_app_token():
     """
     Генерирует JWT токен для GitHub App
@@ -33,8 +37,8 @@ def get_github_app_token():
     # Создаем JWT токен
     now = int(time.time())
     payload = {
-        'iat': now - 60,  # Выдано 60 секунд назад
-        'exp': now + 600,  # Истекает через 10 минут
+        'iat': now - JWT_ISSUED_AT_OFFSET,  # Выдано 60 секунд назад
+        'exp': now + JWT_EXPIRATION_TIME,  # Истекает через 10 минут
         'iss': GITHUB_APP_ID
     }
     
